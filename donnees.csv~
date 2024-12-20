@@ -1,0 +1,9 @@
+ID;Revenu (€) Mensuel;Montant du Prêt (€);Durée de l'Emploi (années);Historique de Crédit;Prêt Approuvé
+1;3500;10000;5;Bon;Oui
+2;2000;5000;3;Mauvais;Non
+3;4000;20000;10;Bon;Oui
+4;1500;2000;2;Bon;Non
+5;3200;7000;7;Mauvais;Oui
+6;1800;3000;1;Bon;Non
+7;3500;12000;8;Bon;Oui
+8;2500;6000;4;Mauvais;Non

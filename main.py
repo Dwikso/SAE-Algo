@@ -1,174 +1,355 @@
 import pandas as pd
-import numpy as np
-from sklearn.preprocessing import LabelEncoder
-import csv
+import tkinter as tk
+from tkinter import filedialog, messagebox
+import random
 
 
-class Node:
-    def __init__(self, index=None, value=None, gauche=None, droite=None, is_terminal=False, prediction=None):
-        self.index = index
-        self.value = value
-        self.gauche = gauche
-        self.droite = droite
-        self.is_terminal = is_terminal
-        self.prediction = prediction
+class ArbreDecisionCART:
+    def __init__(self, profondeur_max, taille_min):
+        self.profondeur_max = profondeur_max
+        self.taille_min = taille_min
+        self.arbre = None
 
-
-class CART:
-    def __init__(self, max_depth, min_size):
-        self.max_depth = max_depth
-        self.min_size = min_size
-        self.root = None
-        self.label_encoder = LabelEncoder()
-
-    def gini_index(self, groups, classes):
-        """Calcul du Gini Index de manière plus efficace."""
-        n_instances = float(sum([len(group) for group in groups]))  # Total des instances
+    def calculer_indice_gini(self, groupes, classes):
+        """
+        Calcule l'indice de Gini pour une division donnée des données.
+        """
+        total_instances = float(sum([len(groupe) for groupe in groupes]))
         gini = 0.0
-        for group in groups:
-            size = len(group)
-            if size == 0:
-                continue  # Si le groupe est vide, on l'ignore
+        for groupe in groupes:
+            taille = len(groupe)
+            if taille == 0:
+                continue
             score = 0.0
-            for class_value in classes:
-                # Calculer la probabilité de chaque classe dans ce groupe
-                p = [row[-1] for row in group].count(class_value) / size  # Fréquence de chaque classe
-                score += p * p
-            gini += (1.0 - score) * (size / n_instances)  # Ponderer selon la taille du groupe
+            for val_class in classes:
+                proportion = [ligne[-1] for ligne in groupe].count(val_class) / taille
+                score += proportion ** 2
+            gini += (1.0 - score) * (taille / total_instances)
         return gini
 
-    def split_data(self, index, value, dataset):
-        """Divise les données en deux groupes en fonction de l'index et de la valeur."""
-        gauche, droite = [], []
-        for row in dataset:
-            if row[index] < value:
-                gauche.append(row)
-            else:
-                droite.append(row)
+    def diviser_ensemble(self, index, valeur, ensemble):
+        """
+        Divise un ensemble de données en deux groupes selon une valeur donnée.
+        """
+        gauche = [ligne for ligne in ensemble if ligne[index] < valeur]
+        droite = [ligne for ligne in ensemble if ligne[index] >= valeur]
         return gauche, droite
 
-    def best_split(self, dataset):
-        """Trouve la meilleure division des données selon le Gini."""
-        class_values = list(set(row[-1] for row in dataset))  # Les classes possibles
-        best_index, best_value, best_score, best_groups = 999, 999, 999, None
+    def trouver_meilleure_division(self, ensemble):
+        """
+        Identifie la meilleure division possible pour un ensemble de données.
+        """
+        valeurs_classes = list(set(ligne[-1] for ligne in ensemble))
+        meilleur_index, meilleure_valeur, meilleur_score, meilleurs_groupes = None, None, float('inf'), None
+        for index in range(len(ensemble[0]) - 1):
+            for ligne in ensemble:
+                groupes = self.diviser_ensemble(index, ligne[index], ensemble)
+                gini = self.calculer_indice_gini(groupes, valeurs_classes)
+                if gini < meilleur_score:
+                    meilleur_index, meilleure_valeur, meilleur_score, meilleurs_groupes = index, ligne[
+                        index], gini, groupes
+        return {'index': meilleur_index, 'valeur': meilleure_valeur, 'groupes': meilleurs_groupes}
 
-        for index in range(len(dataset[0]) - 1):  # Ignore la classe (dernier élément)
-            for row in dataset:
-                groups = self.split_data(index, row[index], dataset)
-
-                # Débogage pour vérifier les groupes et leur contenu
-                print(f"Index: {index}, Value: {row[index]}, Groups: {groups}")
-
-                gini = self.gini_index(groups, class_values)
-
-                # Affichage du gini pour chaque division
-                print(f"Gini: {gini}")
-
-                if gini < best_score:
-                    best_index, best_value, best_score, best_groups = index, row[index], gini, groups
-
-        return {'index': best_index, 'value': best_value, 'groups': best_groups}
-
-    def to_terminal(self, group):
-        """Retourne la classe prédominante dans le groupe."""
-        outcomes = [row[-1] for row in group]
+    def creer_feuille(self, groupe):
+        """
+        Crée une feuille terminale contenant la classe la plus fréquente dans un groupe.
+        """
+        outcomes = [ligne[-1] for ligne in groupe]
         return max(set(outcomes), key=outcomes.count)
 
-    def split(self, node, depth):
-        """Divise un nœud en deux enfants."""
-        gauche, droite = node['groups']
-        del (node['groups'])
+    def diviser_noeud(self, noeud, profondeur):
+        """
+        Divise un noeud en deux sous-noeuds ou crée des feuilles terminales.
+        """
+        gauche, droite = noeud['groupes']
+
+        noeud['groupes'] = None
+
         if not gauche or not droite:
-            prediction = self.to_terminal(gauche + droite)
-            return Node(is_terminal=True, prediction=prediction)
+            noeud['gauche'] = noeud['droite'] = self.creer_feuille(gauche + droite)
+            return
 
-        if depth >= self.max_depth:
-            return Node(is_terminal=True, prediction=self.to_terminal(gauche)), Node(is_terminal=True,
-                                                                                     prediction=self.to_terminal(
-                                                                                         droite))
+        if profondeur >= self.profondeur_max:
+            noeud['gauche'], noeud['droite'] = self.creer_feuille(gauche), self.creer_feuille(droite)
+            return
 
-        left_child = None
-        if len(gauche) > self.min_size:
-            left_child = self.best_split(gauche)
-            left_child = self.split(left_child, depth + 1)
+        if len(gauche) <= self.taille_min:
+            noeud['gauche'] = self.creer_feuille(gauche)
         else:
-            left_child = Node(is_terminal=True, prediction=self.to_terminal(gauche))
+            noeud['gauche'] = self.trouver_meilleure_division(gauche)
+            self.diviser_noeud(noeud['gauche'], profondeur + 1)
 
-        right_child = None
-        if len(droite) > self.min_size:
-            right_child = self.best_split(droite)
-            right_child = self.split(right_child, depth + 1)
+        if len(droite) <= self.taille_min:
+            noeud['droite'] = self.creer_feuille(droite)
         else:
-            right_child = Node(is_terminal=True, prediction=self.to_terminal(droite))
+            noeud['droite'] = self.trouver_meilleure_division(droite)
+            self.diviser_noeud(noeud['droite'], profondeur + 1)
 
-        return Node(node['index'], node['value'], left_child, right_child)
+    def construire_arbre(self, entrainement):
+        """
+        Construit l'arbre de décision à partir des données d'entraînement.
+        """
+        self.arbre = self.trouver_meilleure_division(entrainement)
+        self.diviser_noeud(self.arbre, 1)
 
-    def build_tree(self, dataset):
-        """Construit l'arbre de décision à partir des données."""
-        root = self.best_split(dataset)
-        self.root = self.split(root, 1)
-
-    def predict(self, node, row):
-        """Prédit la classe pour une ligne donnée en suivant l'arbre."""
-        if node.is_terminal:
-            return node.prediction
-        elif row[node.index] < node.value:
-            return self.predict(node.gauche, row)
+    def predire_classe(self, noeud, ligne):
+        """
+        Prédit la classe pour une ligne donnée en parcourant l'arbre.
+        """
+        if ligne[noeud['index']] < noeud['valeur']:
+            if isinstance(noeud['gauche'], dict): #Permet de verifier si le noeud gauche est un sous-noeud (dictionnaire) ou alors une feuille
+                return self.predire_classe(noeud['gauche'], ligne)
+            else:
+                return noeud['gauche']
         else:
-            return self.predict(node.droite, row)
+            if isinstance(noeud['droite'], dict): #Permet de verifier si le noeud droit est un sous-noeud (dictionnaire) ou alors une feuille
+                return self.predire_classe(noeud['droite'], ligne)
+            else:
+                return noeud['droite']
 
-    def fit(self, dataset):
-        """Entraîne l'arbre de décision avec les données fournies."""
-        # Encoder les labels dans les données
-        for row in dataset:
-            row[-1] = self.label_encoder.fit_transform([row[-1]])[0]  # Encoder la classe
-        self.build_tree(dataset)
+    def ajuster(self, ensemble):
+        """
+        Ajuste l'arbre de décision aux données d'entraînement.
+        """
+        self.construire_arbre(ensemble)
 
-    def predict_row(self, row):
-        """Prédit la classe d'une seule ligne."""
-        prediction = self.predict(self.root, row)
-        return self.label_encoder.inverse_transform([prediction])[0]  # Décoder la prédiction
-
-    def predict_dataset(self, dataset):
-        """Prédit les classes pour l'ensemble des données."""
-        return [self.predict_row(row) for row in dataset]
-
-
-def load_and_prepare_data(file_path):
-    """Charge et prépare les données pour l'algorithme CART."""
-    data = pd.read_csv(file_path)
-
-    # Supprimer la colonne ID (inutile pour l'analyse)
-    if 'ID' in data.columns:
-        data = data.drop(columns=['ID'])
-
-    # Identifier les colonnes catégoriques
-    categorical_columns = ['Historique de Crédit', 'Prêt Approuvé']
-    label_encoders = {}
-
-    # Encoder les colonnes catégoriques
-    for col in categorical_columns:
-        if col in data.columns:
-            encoder = LabelEncoder()
-            data[col] = encoder.fit_transform(data[col])
-            label_encoders[col] = encoder
-
-    # Convertir en tableau numpy pour l'entraînement
-    dataset = data.values
-    return dataset, label_encoders
+    def predire_ligne(self, ligne):
+        """
+        Prédit la classe pour une seule ligne de données.
+        """
+        return self.predire_classe(self.arbre, ligne)
 
 
-# Charger et préparer les données
-file_path = "donnees.csv"  # Remplacez par le chemin correct
-dataset, encoders = load_and_prepare_data(file_path)
+class RandomForest:
+    def __init__(self, n_arbres=10, profondeur_max=5, taille_min=5):
+        self.n_arbres = n_arbres
+        self.profondeur_max = profondeur_max
+        self.taille_min = taille_min
 
-# Initialiser et entraîner l'arbre de décision CART
-tree = CART(max_depth=5, min_size=10)
-tree.fit(dataset)
+    def generer_echantillon(self, ensemble):
+        """
+        Génère un échantillon à partir de l'ensemble d'entraînement.
+        """
+        return [random.choice(ensemble) for i in range(len(ensemble))]
 
-# Prédictions
-predictions = tree.predict_dataset(dataset)
+    def ajuster(self, ensemble):
+        """
+        Entraîne la forêt en ajustant chaque arbre sur un sous-échantillon.
+        """
+        self.arbres = []
+        for i in range(self.n_arbres):
+            sous_ensemble = self.generer_echantillon(ensemble)
+            arbre = ArbreDecisionCART(self.profondeur_max, self.taille_min)
+            arbre.ajuster(sous_ensemble)
+            self.arbres.append(arbre)
 
-# Afficher les prédictions
-for row, prediction in zip(dataset, predictions):
-    print(f"Prédiction: {prediction}, Réel: {row[-1]}")
+    def predire_majoritaire(self, ligne):
+        """
+        Prédit la classe pour une ligne en combinant les prédictions des arbres.
+        """
+        predictions = []
+        for arbre in self.arbres:
+            predictions.append(arbre.predire_ligne(ligne))
+        classes_majoritaire = max(set(predictions), key=predictions.count)
+        return classes_majoritaire
+
+
+class Application:
+    def __init__(self):
+        """Initialise l'interface de l'application et les variables nécessaires."""
+        self.root = tk.Tk()
+        self.root.title("Prédiction avec Arbre de Décision ou RandomForest")
+        self.root.geometry("500x600")
+
+        # Variables globales
+        self.dataset = None
+        self.columns = None
+        self.model = None
+        self.X_test = None
+        self.y_test = None
+        self.algo_choice = tk.StringVar(value="CART")  # Choix par défaut : CART
+        self.input_entries = {}  # Dictionnaire pour stocker les champs de saisie
+
+        # Créer les widgets de l'interface
+        self.create_widgets()
+        self.root.mainloop()
+
+    def create_widgets(self):
+        """Crée les éléments de l'interface utilisateur."""
+        label_algo = tk.Label(self.root, text="Sélectionnez l'algorithme :")
+        label_algo.pack(pady=5)
+
+        # Menu déroulant pour choisir l'algorithme
+        combo_algo = tk.OptionMenu(self.root, self.algo_choice, "CART", "RandomForest")
+        combo_algo.pack(pady=5)
+
+        btn_load = tk.Button(self.root, text="Charger un fichier CSV", command=self.charger_donnees)
+        btn_load.pack(pady=10)
+
+        # Section pour les entrées utilisateur
+        self.input_frame = tk.Frame(self.root)
+        self.input_frame.pack(pady=10)
+
+        btn_predict = tk.Button(self.root, text="Faire une Prédiction", command=self.effectuer_prediction)
+        btn_predict.pack(pady=10)
+
+        btn_quit = tk.Button(self.root, text="Quitter", command=self.root.quit)
+        btn_quit.pack(pady=10)
+
+        btn_generate = tk.Button(self.root, text="Générer des Exemples", command=self.afficher_exemples)
+        btn_generate.pack(pady=10)
+
+    def pretraiter_donnees(self, filename):
+        """
+        Prépare les données en les chargeant depuis un fichier CSV.
+        Convertit les variables catégoriques en numériques.
+        """
+        df = pd.read_csv(filename)
+        required_columns = ['Historique de Credit', 'Pret Approuve']
+        for col in required_columns:
+            if col not in df.columns:
+                messagebox.showerror("Erreur", f"Le fichier CSV doit contenir la colonne '{col}'")
+                return None
+
+        # Convertir les colonnes catégoriques
+        df['Historique de Credit'] = df['Historique de Credit'].map({'Bon': 1, 'Mauvais': 0})
+        df['Pret Approuve'] = df['Pret Approuve'].map({'Oui': 1, 'Non': 0})
+        if 'ID' in df.columns:
+            df = df.drop(columns=['ID'])
+
+        return df.values.tolist(), df.columns.tolist()
+
+    def charger_donnees(self):
+        """
+        Charge un fichier CSV et entraîne le modèle choisi (CART ou RandomForest).
+        """
+        csv_path = filedialog.askopenfilename(
+            title="Sélectionner un fichier CSV",
+            filetypes=[("Fichiers CSV", "*.csv")])
+        if not csv_path:
+            return
+        try:
+            dataset, self.columns = self.pretraiter_donnees(csv_path)
+            ensemble_entrainement, ensemble_test = self.separer_donnees(dataset)
+
+            self.X_test = [ligne[:-1] for ligne in ensemble_test]
+            self.y_test = [ligne[-1] for ligne in ensemble_test]
+
+            # Initialisation du modèle selon le choix
+            if self.algo_choice.get() == "CART":
+                self.model = ArbreDecisionCART(profondeur_max=20, taille_min=1)
+            elif self.algo_choice.get() == "RandomForest":
+                self.model = RandomForest(n_arbres=100, profondeur_max=10, taille_min=1)
+
+            self.model.ajuster(ensemble_entrainement)
+
+            # Prédire sur l'ensemble de test pour évaluer la précision
+            y_pred = [self.model.predire_majoritaire(x) if self.algo_choice.get() == "RandomForest"
+                      else self.model.predire_ligne(x) for x in self.X_test]
+            precision = self.calculer_precision(self.y_test, y_pred) * 100
+            messagebox.showinfo("Précision", f"Précision sur l'ensemble de test : {precision:.2f}%")
+            messagebox.showinfo("Succès", "Données chargées et modèle entraîné avec succès!")
+
+            # Créer les champs de saisie après avoir chargé les données
+            self.creer_champs_saisie()
+        except Exception as e:
+            messagebox.showerror("Erreur", f"Erreur lors du chargement des données : {e}")
+
+    def creer_champs_saisie(self):
+        """
+        Crée des champs de saisie pour les prédictions basés sur les colonnes du jeu de données.
+        """
+        for widget in self.input_frame.winfo_children():
+            widget.destroy()
+
+        self.input_entries.clear()
+
+        for column in self.columns[:-1]:
+            label = tk.Label(self.input_frame, text=f"{column}:")
+            label.pack(anchor="w", pady=2)
+            entry = tk.Entry(self.input_frame)
+            entry.pack(fill="x", pady=2)
+            self.input_entries[column] = entry
+
+    def separer_donnees(self, dataset, ratio_test=0.2):
+        """
+        Divise les données en ensemble d'entraînement et de test.
+        """
+        taille_test = int(len(dataset) * ratio_test)
+        random.shuffle(dataset)
+        ensemble_test = dataset[:taille_test]
+        ensemble_entrainement = dataset[taille_test:]
+        return ensemble_entrainement, ensemble_test
+
+    def calculer_precision(self, y_reel, y_pred):
+        """
+        Calcule la précision du modèle.
+        """
+        compteur_correct = 0
+        for i in range(len(y_reel)):
+            if y_reel[i] == y_pred[i]:
+                compteur_correct += 1
+        return compteur_correct / len(y_reel)
+
+    def get_user_inputs(self):
+        """
+        Récupère les entrées utilisateur pour effectuer une prédiction.
+        """
+        user_values = []
+        for column, entry in self.input_entries.items():
+            try:
+                value = float(entry.get())
+                user_values.append(value)
+            except ValueError:
+                messagebox.showerror("Erreur", f"Valeur invalide pour {column}. Veuillez entrer un nombre.")
+                return None
+        return user_values
+
+    def generer_exemples(self, nb_exemples=5):
+        """
+        Génère des exemples aléatoires pour tester le modèle.
+        """
+        exemples = []
+        for i in range(nb_exemples):
+            revenu = random.randint(1000, 10000)
+            montant_pret = random.randint(5000, 50000)
+            duree_emploi = random.randint(1, 10)
+            historique_credit = random.choice([0, 1])
+            exemple = [revenu, montant_pret, duree_emploi, historique_credit]
+            prediction = self.model.predire_majoritaire(exemple) if self.algo_choice.get() == "RandomForest" \
+                else self.model.predire_ligne(exemple)
+            exemples.append((exemple, "Accepté" if prediction == 1 else "Refusé"))
+        return exemples
+
+    def afficher_exemples(self):
+        """
+        Affiche les exemples générés et leurs prédictions.
+        """
+        if self.model is None:
+            messagebox.showerror("Erreur", "Le modèle n'est pas entraîné. Veuillez charger un fichier CSV.")
+            return
+
+        exemples = self.generer_exemples()
+        for exemple, decision in exemples:
+            print(f"Exemple : {exemple} -> Décision : {decision}")
+
+    def effectuer_prediction(self):
+        """
+        Effectue une prédiction à partir des valeurs saisies par l'utilisateur.
+        """
+        if self.model is None:
+            messagebox.showerror("Erreur", "Le modèle n'est pas entraîné. Veuillez charger un fichier CSV.")
+            return
+
+        try:
+            user_values = self.get_user_inputs()
+            if user_values is None:
+                return
+
+            prediction = self.model.predire_majoritaire(user_values) if self.algo_choice.get() == "RandomForest" \
+                else self.model.predire_ligne(user_values)
+            messagebox.showinfo("Prédiction", f"Prêt Approuvé ? : {'Oui' if prediction == 1 else 'Non'}")
+        except Exception as e:
+            messagebox.showerror("Erreur", f"Erreur : {e}")
+
+Application()
