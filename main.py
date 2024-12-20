@@ -14,48 +14,89 @@ class ArbreDecisionCART:
         """
         Calcule l'indice de Gini pour une division donnée des données.
         """
-        total_instances = float(sum([len(groupe) for groupe in groupes]))
+        total_instances = 0
+        for groupe in groupes:
+            total_instances += len(groupe)
+
         gini = 0.0
+
         for groupe in groupes:
             taille = len(groupe)
             if taille == 0:
                 continue
             score = 0.0
             for val_class in classes:
-                proportion = [ligne[-1] for ligne in groupe].count(val_class) / taille
+                proportion = 0
+                for ligne in groupe:
+                    if ligne[-1] == val_class:
+                        proportion += 1
+                proportion /= taille
                 score += proportion ** 2
-            gini += (1.0 - score) * (taille / total_instances)
+            gini_groupe = 1.0 - score
+            gini += gini_groupe * (taille / total_instances)
+
         return gini
 
     def diviser_ensemble(self, index, valeur, ensemble):
         """
         Divise un ensemble de données en deux groupes selon une valeur donnée.
         """
-        gauche = [ligne for ligne in ensemble if ligne[index] < valeur]
-        droite = [ligne for ligne in ensemble if ligne[index] >= valeur]
+        gauche, droite = [], []
+        for ligne in ensemble:
+            if ligne[index] < valeur:
+                gauche.append(ligne)
+            else:
+                droite.append(ligne)
         return gauche, droite
 
     def trouver_meilleure_division(self, ensemble):
         """
         Identifie la meilleure division possible pour un ensemble de données.
         """
-        valeurs_classes = list(set(ligne[-1] for ligne in ensemble))
-        meilleur_index, meilleure_valeur, meilleur_score, meilleurs_groupes = None, None, float('inf'), None
+        valeurs_classes = []
+        for ligne in ensemble:
+            if ligne[-1] not in valeurs_classes:
+                valeurs_classes.append(ligne[-1])
+
+        meilleur_score = float('inf')
+        meilleur_noeud = {'index': None, 'valeur': None, 'groupes': None}
+
         for index in range(len(ensemble[0]) - 1):
             for ligne in ensemble:
-                groupes = self.diviser_ensemble(index, ligne[index], ensemble)
-                gini = self.calculer_indice_gini(groupes, valeurs_classes)
-                if gini < meilleur_score:
-                    meilleur_index, meilleure_valeur, meilleur_score, meilleurs_groupes = index, ligne[
-                        index], gini, groupes
-        return {'index': meilleur_index, 'valeur': meilleure_valeur, 'groupes': meilleurs_groupes}
+                valeur_courante = ligne[index]
+                groupes = self.diviser_ensemble(index, valeur_courante, ensemble)
+                score_gini = self.calculer_indice_gini(groupes, valeurs_classes)
+
+                if score_gini < meilleur_score:
+                    meilleur_score = score_gini
+                    meilleur_noeud['index'] = index
+                    meilleur_noeud['valeur'] = valeur_courante
+                    meilleur_noeud['groupes'] = groupes
+
+        return meilleur_noeud
 
     def creer_feuille(self, groupe):
         """
         Crée une feuille terminale contenant la classe la plus fréquente dans un groupe.
         """
-        outcomes = [ligne[-1] for ligne in groupe]
-        return max(set(outcomes), key=outcomes.count)
+        classes = [ligne[-1] for ligne in groupe]
+
+        #Permet de compter la frequences de chaque classe dans la classes
+        frequences = {}
+        for classe in classes:
+            if classe not in frequences:
+                frequences[classe] = 0
+            frequences[classe] += 1
+
+        #Permet de trouver la classe avec la plus grande fréquences
+        classe_frequente = None
+        max_frequence = 0
+        for classe, frequence in frequences.items():
+            if frequence > max_frequence:
+                max_frequence = frequence
+                classe_frequente = classe
+
+        return classe_frequente
 
     def diviser_noeud(self, noeud, profondeur):
         """
@@ -160,22 +201,21 @@ class Application:
         self.root = tk.Tk()
         self.root.title("Prédiction avec Arbre de Décision ou RandomForest")
         self.root.geometry("500x600")
-
-        # Variables globales
         self.dataset = None
         self.columns = None
         self.model = None
-        self.X_test = None
-        self.y_test = None
+        self.caracteristiques_test = None
+        self.classes_reelles = None
         self.algo_choice = tk.StringVar(value="CART")  # Choix par défaut : CART
-        self.input_entries = {}  # Dictionnaire pour stocker les champs de saisie
+        self.input_entries = {}
 
-        # Créer les widgets de l'interface
         self.create_widgets()
         self.root.mainloop()
 
     def create_widgets(self):
-        """Crée les éléments de l'interface utilisateur."""
+        """
+        Crée les éléments de l'interface utilisateur.
+        """
         label_algo = tk.Label(self.root, text="Sélectionnez l'algorithme :")
         label_algo.pack(pady=5)
 
@@ -232,10 +272,9 @@ class Application:
             dataset, self.columns = self.pretraiter_donnees(csv_path)
             ensemble_entrainement, ensemble_test = self.separer_donnees(dataset)
 
-            self.X_test = [ligne[:-1] for ligne in ensemble_test]
-            self.y_test = [ligne[-1] for ligne in ensemble_test]
+            self.caracteristiques_test = [ligne[:-1] for ligne in ensemble_test]
+            self.classes_reelles = [ligne[-1] for ligne in ensemble_test]
 
-            # Initialisation du modèle selon le choix
             if self.algo_choice.get() == "CART":
                 self.model = ArbreDecisionCART(profondeur_max=20, taille_min=1)
             elif self.algo_choice.get() == "RandomForest":
@@ -243,14 +282,13 @@ class Application:
 
             self.model.ajuster(ensemble_entrainement)
 
-            # Prédire sur l'ensemble de test pour évaluer la précision
-            y_pred = [self.model.predire_majoritaire(x) if self.algo_choice.get() == "RandomForest"
-                      else self.model.predire_ligne(x) for x in self.X_test]
-            precision = self.calculer_precision(self.y_test, y_pred) * 100
+            classes_predites = [self.model.predire_majoritaire(x) if self.algo_choice.get() == "RandomForest"
+                                else self.model.predire_ligne(x) for x in
+                                self.caracteristiques_test]
+            precision = self.calculer_precision(self.classes_reelles, classes_predites) * 100
             messagebox.showinfo("Précision", f"Précision sur l'ensemble de test : {precision:.2f}%")
             messagebox.showinfo("Succès", "Données chargées et modèle entraîné avec succès!")
 
-            # Créer les champs de saisie après avoir chargé les données
             self.creer_champs_saisie()
         except Exception as e:
             messagebox.showerror("Erreur", f"Erreur lors du chargement des données : {e}")
@@ -271,25 +309,24 @@ class Application:
             entry.pack(fill="x", pady=2)
             self.input_entries[column] = entry
 
-    def separer_donnees(self, dataset, ratio_test=0.2):
+    def separer_donnees(self, dataset, taille_test=100):
         """
-        Divise les données en ensemble d'entraînement et de test.
+        Divise les données en ensemble d'entraînement et de test avec une taille fixe pour le test.
         """
-        taille_test = int(len(dataset) * ratio_test)
         random.shuffle(dataset)
         ensemble_test = dataset[:taille_test]
         ensemble_entrainement = dataset[taille_test:]
         return ensemble_entrainement, ensemble_test
 
-    def calculer_precision(self, y_reel, y_pred):
+    def calculer_precision(self, valeurs_reelles, valeurs_predites):
         """
         Calcule la précision du modèle.
         """
         compteur_correct = 0
-        for i in range(len(y_reel)):
-            if y_reel[i] == y_pred[i]:
+        for i in range(len(valeurs_reelles)):
+            if valeurs_reelles[i] == valeurs_predites[i]:
                 compteur_correct += 1
-        return compteur_correct / len(y_reel)
+        return compteur_correct / len(valeurs_reelles)
 
     def get_user_inputs(self):
         """
